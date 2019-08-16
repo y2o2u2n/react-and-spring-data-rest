@@ -8,45 +8,45 @@ class App extends React.Component {
 
     constructor(props) {
         super(props);
-        this.state = {messages: []};
+        this.state = {rooms: []};
     }
 
     componentDidMount() {
-        client({method: 'GET', path: '/api/messages'}).done(response => {
-            this.setState({messages: response.entity._embedded.messages});
+        client({method: 'GET', path: '/api/rooms'}).done(response => {
+            this.setState({rooms: response.entity._embedded.rooms});
         });
     }
 
     render() {
         return (
-            <MessageList messages={this.state.messages}/>
+            <RoomList rooms={this.state.rooms}/>
         )
     }
 }
 
-class MessageList extends React.Component {
+class RoomList extends React.Component {
     render() {
-        const messages = this.props.messages.map(message =>
-            <Message key={message._links.self.href} message={message}/>
+        const rooms = this.props.rooms.map(room =>
+            <Room key={room._links.self.href} room={room}/>
         );
         return (
             <table>
                 <tbody>
                 <tr>
-                    <th>content</th>
+                    <th>title</th>
                 </tr>
-                {messages}
+                {rooms}
                 </tbody>
             </table>
         )
     }
 }
 
-class Message extends React.Component {
+class Room extends React.Component {
     render() {
         return (
             <tr>
-                <td>{this.props.message.content}</td>
+                <td>{this.props.room.title}</td>
             </tr>
         )
     }

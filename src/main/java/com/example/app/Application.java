@@ -1,13 +1,15 @@
 package com.example.app;
 
+import java.util.stream.IntStream;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
-import com.example.app.messages.Message;
-import com.example.app.messages.MessageRepository;
+import com.example.app.rooms.Room;
+import com.example.app.rooms.RoomRepository;
 
 @SpringBootApplication
 public class Application {
@@ -20,15 +22,15 @@ public class Application {
 	public CommandLineRunner commandLineRunner() {
 		return new CommandLineRunner() {
 			@Autowired
-			private MessageRepository repository;
+			private RoomRepository repository;
 
 			@Override
 			public void run(String... args) {
-				this.repository.save(
-					Message.builder()
-						.content("message's content")
+				IntStream.range(1, 12).forEach(i -> this.repository.save(
+					Room.builder()
+						.title(i + "room")
 						.build()
-				);
+				));
 			}
 		};
 	}

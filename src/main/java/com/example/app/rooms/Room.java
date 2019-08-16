@@ -1,4 +1,4 @@
-package com.example.app.messages;
+package com.example.app.rooms;
 
 import javax.persistence.Entity;
 import javax.persistence.GeneratedValue;
@@ -15,7 +15,7 @@ import lombok.Setter;
 
 @Getter @Setter @EqualsAndHashCode(of = "id")
 @Builder @NoArgsConstructor @AllArgsConstructor
-public class Message {
+public class Room {
 	private @Id @GeneratedValue Long id;
-	private String content;
+	private String title;
 }
