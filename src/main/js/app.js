@@ -2,9 +2,9 @@
 
 const React = require('react');
 const ReactDOM = require('react-dom');
+const when = require('when');
 const client = require('./client');
-
-const follow = require('./api/follow');
+const follow = require('./follow');
 
 const root = '/api';
 
@@ -15,42 +15,61 @@ class App extends React.Component {
         this.state = {rooms: [], attributes: [], pageSize: 2, links: {}};
         this.updatePageSize = this.updatePageSize.bind(this);
         this.onCreate = this.onCreate.bind(this);
+        this.onUpdate = this.onUpdate.bind(this);
         this.onDelete = this.onDelete.bind(this);
         this.onNavigate = this.onNavigate.bind(this);
     }
 
     loadFromServer(pageSize) {
-        follow(client, root, [{rel: 'rooms', params: {size: pageSize}}])
-        .then(roomCollection => {
+        follow(
+            client,
+            root,
+            [{rel: 'rooms', params: {size: pageSize}}]
+        ).then(roomCollection => {
             return client({
-                    method: 'GET',
-                    path: roomCollection.entity._links.profile.href,
-                    headers: {'Accept': 'application/schema+json'}
+                method: 'GET',
+                path: roomCollection.entity._links.profile.href,
+                headers: {'Accept': 'application/schema+json'}
             }).then(schema => {
                 this.schema = schema.entity;
+                this.links = roomCollection.entity._links;
                 return roomCollection;
             });
-        }).done(roomCollection => {
+        }).then(roomCollection => {
+            return roomCollection.entity._embedded.rooms.map(room =>
+                client({
+                    method: 'GET',
+                    path: room._links.self.href
+                })
+            );
+        }).then(roomPromises => {
+            return when.all(roomPromises);
+        }).done(rooms => {
             this.setState({
-                rooms: roomCollection.entity._embedded.rooms,
+                rooms: rooms,
                 attributes: Object.keys(this.schema.properties),
                 pageSize: pageSize,
-                links: roomCollection.entity._links
+                links: this.links
             });
         });
     }
 
     onCreate(newRoom) {
-        follow(client, root, ['rooms'])
-            .then(roomCollection => {
+        const self = this;
+
+        follow(
+            client,
+            root,
+            ['rooms']
+        ).then(response => {
                 return client({
                     method: 'POST',
-                    path: roomCollection.entity._links.self.href,
+                    path: response.entity._links.self.href,
                     entity: newRoom,
                     headers: {'Content-Type': 'application/json'}
                 });
-            }).then(response => {
-            return follow(client, root, [{rel: 'rooms', params: {'size': this.state.pageSize}}]);
+        }).then(response => {
+            return follow(client, root, [{rel: 'rooms', params: {'size': self.state.pageSize}}]);
         }).done(response => {
             if (typeof response.entity._links.last !== "undefined") {
                 this.onNavigate(response.entity._links.last.href);
@@ -60,10 +79,29 @@ class App extends React.Component {
         });
     }
 
+    onUpdate(room, updatedRoom) {
+        client({
+            method: 'PUT',
+            path: room.entity._links.self.href,
+            entity: updatedRoom,
+            headers: {
+                'Content-Type': 'application/json',
+                'If-Match': room.headers.Etag
+            }
+        }).done(response => {
+            this.loadFromServer(this.state.pageSize);
+        }, response => {
+            if (response.status.code === 412) {
+                alert('DENIED: Unable to update ' +
+                    room.entity._links.self.href + '. Your copy is stale.');
+            }
+        });
+    }
+
     onDelete(room) {
         client({
             method: 'DELETE',
-            path: room._links.self.href
+            path: room.entity._links.self.href
         }).done(response => {
             this.loadFromServer(this.state.pageSize);
         });
@@ -73,12 +111,23 @@ class App extends React.Component {
         client({
             method: 'GET',
             path: navUri
-        }).done(roomCollection => {
+        }).then(roomCollection => {
+            this.links = roomCollection.entity._links;
+
+            return roomCollection.entity._embedded.rooms.map(room =>
+                client({
+                    method: 'GET',
+                    path: room._links.self.href
+                })
+            );
+        }).then(roomPromises => {
+            return when.all(roomPromises);
+        }).done(rooms => {
             this.setState({
-                rooms: roomCollection.entity._embedded.rooms,
-                attributes: this.state.attributes,
+                rooms: rooms,
+                attributes: Object.keys(this.schema.properties),
                 pageSize: this.state.pageSize,
-                links: roomCollection.entity._links
+                links: this.links
             });
         });
     }
@@ -100,7 +149,9 @@ class App extends React.Component {
                 <RoomList rooms={this.state.rooms}
                           links={this.state.links}
                           pageSize={this.state.pageSize}
+                          attributes={this.state.attributes}
                           onNavigate={this.onNavigate}
+                          onUpdate={this.onUpdate}
                           onDelete={this.onDelete}
                           updatePageSize={this.updatePageSize}/>
             </div>
@@ -158,6 +209,54 @@ class CreateDialog extends React.Component {
     }
 }
 
+class UpdateDialog extends React.Component {
+
+    constructor(props) {
+        super(props);
+        this.handleSubmit = this.handleSubmit.bind(this);
+    }
+
+    handleSubmit(e) {
+        e.preventDefault();
+        const updatedRoom = {};
+        this.props.attributes.forEach(attribute => {
+            updatedRoom[attribute] = ReactDOM.findDOMNode(this.refs[attribute]).value.trim();
+        });
+        this.props.onUpdate(this.props.room, updatedRoom);
+        window.location = "#";
+    }
+
+    render() {
+        const inputs = this.props.attributes.map(attribute =>
+            <p key={this.props.room.entity[attribute]}>
+                <input type="text" placeholder={attribute}
+                       defaultValue={this.props.room.entity[attribute]}
+                       ref={attribute} className="field"/>
+            </p>
+        );
+
+        const dialogId = "updateRoom-" + this.props.room.entity._links.self.href;
+
+        return (
+            <div key={this.props.room.entity._links.self.href}>
+                <a href={"#" + dialogId}>Update</a>
+                <div id={dialogId} className="modalDialog">
+                    <div>
+                        <a href="#" title="Close" className="close">X</a>
+
+                        <h2>Update an room</h2>
+
+                        <form>
+                            {inputs}
+                            <button onClick={this.handleSubmit}>Update</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+}
+
 class RoomList extends React.Component {
     constructor(props) {
         super(props);
@@ -198,10 +297,13 @@ class RoomList extends React.Component {
         this.props.onNavigate(this.props.links.last.href);
     }
 
-
     render() {
         const rooms = this.props.rooms.map(room =>
-            <Room key={room._links.self.href} room={room} onDelete={this.props.onDelete}/>
+            <Room key={room.entity._links.self.href}
+                  room={room}
+                  attributes={this.props.attributes}
+                  onUpdate={this.props.onUpdate}
+                  onDelete={this.props.onDelete}/>
         );
 
         const navLinks = [];
@@ -226,6 +328,7 @@ class RoomList extends React.Component {
                     <tr>
                         <th>Title</th>
                         <th></th>
+                        <th></th>
                     </tr>
                     {rooms}
                     </tbody>
@@ -236,7 +339,6 @@ class RoomList extends React.Component {
             </div>
         )
     }
-
 }
 
 class Room extends React.Component {
@@ -253,7 +355,12 @@ class Room extends React.Component {
     render() {
         return (
             <tr>
-                <td>{this.props.room.title}</td>
+                <td>{this.props.room.entity.title}</td>
+                <td>
+                    <UpdateDialog room={this.props.room}
+                                  attributes={this.props.attributes}
+                                  onUpdate={this.props.onUpdate}/>
+                </td>
                 <td>
                     <button onClick={this.handleDelete}>Delete</button>
                 </td>
