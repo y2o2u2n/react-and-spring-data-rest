@@ -5,6 +5,7 @@ const ReactDOM = require('react-dom');
 const when = require('when');
 const client = require('./client');
 const follow = require('./follow');
+const stompClient = require('./websocket-listener');
 
 const root = '/api';
 
@@ -12,12 +13,14 @@ class App extends React.Component {
 
     constructor(props) {
         super(props);
-        this.state = {rooms: [], attributes: [], pageSize: 2, links: {}};
+        this.state = {rooms: [], attributes: [], page: 1, pageSize: 2, links: {}};
         this.updatePageSize = this.updatePageSize.bind(this);
         this.onCreate = this.onCreate.bind(this);
         this.onUpdate = this.onUpdate.bind(this);
         this.onDelete = this.onDelete.bind(this);
         this.onNavigate = this.onNavigate.bind(this);
+        this.refreshCurrentPage = this.refreshCurrentPage.bind(this);
+        this.refreshAndGoToLastPage = this.refreshAndGoToLastPage.bind(this);
     }
 
     loadFromServer(pageSize) {
@@ -36,6 +39,7 @@ class App extends React.Component {
                 return roomCollection;
             });
         }).then(roomCollection => {
+            this.page = roomCollection.entity.page;
             return roomCollection.entity._embedded.rooms.map(room =>
                 client({
                     method: 'GET',
@@ -46,6 +50,7 @@ class App extends React.Component {
             return when.all(roomPromises);
         }).done(rooms => {
             this.setState({
+                page: this.page,
                 rooms: rooms,
                 attributes: Object.keys(this.schema.properties),
                 pageSize: pageSize,
@@ -55,28 +60,14 @@ class App extends React.Component {
     }
 
     onCreate(newRoom) {
-        const self = this;
-
-        follow(
-            client,
-            root,
-            ['rooms']
-        ).then(response => {
-                return client({
+        follow(client, root, ['rooms']).done(response => {
+                client({
                     method: 'POST',
                     path: response.entity._links.self.href,
                     entity: newRoom,
                     headers: {'Content-Type': 'application/json'}
-                });
-        }).then(response => {
-            return follow(client, root, [{rel: 'rooms', params: {'size': self.state.pageSize}}]);
-        }).done(response => {
-            if (typeof response.entity._links.last !== "undefined") {
-                this.onNavigate(response.entity._links.last.href);
-            } else {
-                this.onNavigate(response.entity._links.self.href);
-            }
-        });
+                })
+        })
     }
 
     onUpdate(room, updatedRoom) {
@@ -89,22 +80,16 @@ class App extends React.Component {
                 'If-Match': room.headers.Etag
             }
         }).done(response => {
-            this.loadFromServer(this.state.pageSize);
+            /* Let the websocket handler update the state */
         }, response => {
             if (response.status.code === 412) {
-                alert('DENIED: Unable to update ' +
-                    room.entity._links.self.href + '. Your copy is stale.');
+                alert('DENIED: Unable to update ' + room.entity._links.self.href + '. Your copy is stale.');
             }
         });
     }
 
     onDelete(room) {
-        client({
-            method: 'DELETE',
-            path: room.entity._links.self.href
-        }).done(response => {
-            this.loadFromServer(this.state.pageSize);
-        });
+        client({method: 'DELETE', path: room.entity._links.self.href});
     }
 
     onNavigate(navUri) {
@@ -113,6 +98,7 @@ class App extends React.Component {
             path: navUri
         }).then(roomCollection => {
             this.links = roomCollection.entity._links;
+            this.page = roomCollection.entity.page;
 
             return roomCollection.entity._embedded.rooms.map(room =>
                 client({
@@ -124,6 +110,7 @@ class App extends React.Component {
             return when.all(roomPromises);
         }).done(rooms => {
             this.setState({
+                page: this.page,
                 rooms: rooms,
                 attributes: Object.keys(this.schema.properties),
                 pageSize: this.state.pageSize,
@@ -138,15 +125,64 @@ class App extends React.Component {
         }
     }
 
+    refreshAndGoToLastPage(message) {
+        follow(client, root, [{
+            rel: 'rooms',
+            params: {size: this.state.pageSize}
+        }]).done(response => {
+            if (response.entity._links.last !== undefined) {
+                this.onNavigate(response.entity._links.last.href);
+            } else {
+                this.onNavigate(response.entity._links.self.href);
+            }
+        })
+    }
+
+    refreshCurrentPage(message) {
+        follow(client, root, [{
+            rel: 'rooms',
+            params: {
+                size: this.state.pageSize,
+                page: this.state.page.number
+            }
+        }]).then(roomCollection => {
+            this.links = roomCollection.entity._links;
+            this.page = roomCollection.entity.page;
+
+            return roomCollection.entity._embedded.rooms.map(room => {
+                return client({
+                    method: 'GET',
+                    path: room._links.self.href
+                })
+            });
+        }).then(roomPromises => {
+            return when.all(roomPromises);
+        }).then(rooms => {
+            this.setState({
+                page: this.page,
+                rooms: rooms,
+                attributes: Object.keys(this.schema.properties),
+                pageSize: this.state.pageSize,
+                links: this.links
+            });
+        });
+    }
+
     componentDidMount() {
         this.loadFromServer(this.state.pageSize);
+        stompClient.register([
+            {route: '/topic/newRoom', callback: this.refreshAndGoToLastPage},
+            {route: '/topic/updateRoom', callback: this.refreshCurrentPage},
+            {route: '/topic/deleteRoom', callback: this.refreshCurrentPage}
+        ]);
     }
 
     render() {
         return (
             <div>
                 <CreateDialog attributes={this.state.attributes} onCreate={this.onCreate}/>
-                <RoomList rooms={this.state.rooms}
+                <RoomList page={this.state.page}
+                          rooms={this.state.rooms}
                           links={this.state.links}
                           pageSize={this.state.pageSize}
                           attributes={this.state.attributes}
@@ -240,6 +276,7 @@ class UpdateDialog extends React.Component {
         return (
             <div key={this.props.room.entity._links.self.href}>
                 <a href={"#" + dialogId}>Update</a>
+
                 <div id={dialogId} className="modalDialog">
                     <div>
                         <a href="#" title="Close" className="close">X</a>
@@ -298,6 +335,9 @@ class RoomList extends React.Component {
     }
 
     render() {
+        const pageInfo = this.props.page.hasOwnProperty("number") ?
+            <h3>Rooms - Page {this.props.page.number + 1} of {this.props.page.totalPages}</h3> : null;
+
         const rooms = this.props.rooms.map(room =>
             <Room key={room.entity._links.self.href}
                   room={room}
@@ -322,6 +362,7 @@ class RoomList extends React.Component {
 
         return (
             <div>
+                {pageInfo}
                 <input ref="pageSize" defaultValue={this.props.pageSize} onInput={this.handleInput}/>
                 <table>
                     <tbody>
