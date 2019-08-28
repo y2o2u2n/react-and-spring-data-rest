@@ -13,7 +13,7 @@ class App extends React.Component {
 
     constructor(props) {
         super(props);
-        this.state = {rooms: [], attributes: [], page: 1, pageSize: 2, links: {}};
+        this.state = {messages: [], attributes: [], page: 1, pageSize: 2, links: {}};
         this.updatePageSize = this.updatePageSize.bind(this);
         this.onCreate = this.onCreate.bind(this);
         this.onUpdate = this.onUpdate.bind(this);
@@ -27,31 +27,31 @@ class App extends React.Component {
         follow(
             client,
             root,
-            [{rel: 'rooms', params: {size: pageSize}}]
-        ).then(roomCollection => {
+            [{rel: 'messages', params: {size: pageSize}}]
+        ).then(messageCollection => {
             return client({
                 method: 'GET',
-                path: roomCollection.entity._links.profile.href,
+                path: messageCollection.entity._links.profile.href,
                 headers: {'Accept': 'application/schema+json'}
             }).then(schema => {
                 this.schema = schema.entity;
-                this.links = roomCollection.entity._links;
-                return roomCollection;
+                this.links = messageCollection.entity._links;
+                return messageCollection;
             });
-        }).then(roomCollection => {
-            this.page = roomCollection.entity.page;
-            return roomCollection.entity._embedded.rooms.map(room =>
+        }).then(messageCollection => {
+            this.page = messageCollection.entity.page;
+            return messageCollection.entity._embedded.messages.map(message =>
                 client({
                     method: 'GET',
-                    path: room._links.self.href
+                    path: message._links.self.href
                 })
             );
-        }).then(roomPromises => {
-            return when.all(roomPromises);
-        }).done(rooms => {
+        }).then(messagePromises => {
+            return when.all(messagePromises);
+        }).done(messages => {
             this.setState({
                 page: this.page,
-                rooms: rooms,
+                messages: messages,
                 attributes: Object.keys(this.schema.properties),
                 pageSize: pageSize,
                 links: this.links
@@ -59,59 +59,59 @@ class App extends React.Component {
         });
     }
 
-    onCreate(newRoom) {
-        follow(client, root, ['rooms']).done(response => {
+    onCreate(newMessage) {
+        follow(client, root, ['messages']).done(response => {
                 client({
                     method: 'POST',
                     path: response.entity._links.self.href,
-                    entity: newRoom,
+                    entity: newMessage,
                     headers: {'Content-Type': 'application/json'}
                 })
         })
     }
 
-    onUpdate(room, updatedRoom) {
+    onUpdate(message, updatedMessage) {
         client({
             method: 'PUT',
-            path: room.entity._links.self.href,
-            entity: updatedRoom,
+            path: message.entity._links.self.href,
+            entity: updatedMessage,
             headers: {
                 'Content-Type': 'application/json',
-                'If-Match': room.headers.Etag
+                'If-Match': message.headers.Etag
             }
         }).done(response => {
             /* Let the websocket handler update the state */
         }, response => {
             if (response.status.code === 412) {
-                alert('DENIED: Unable to update ' + room.entity._links.self.href + '. Your copy is stale.');
+                alert('DENIED: Unable to update ' + message.entity._links.self.href + '. Your copy is stale.');
             }
         });
     }
 
-    onDelete(room) {
-        client({method: 'DELETE', path: room.entity._links.self.href});
+    onDelete(message) {
+        client({method: 'DELETE', path: message.entity._links.self.href});
     }
 
     onNavigate(navUri) {
         client({
             method: 'GET',
             path: navUri
-        }).then(roomCollection => {
-            this.links = roomCollection.entity._links;
-            this.page = roomCollection.entity.page;
+        }).then(messageCollection => {
+            this.links = messageCollection.entity._links;
+            this.page = messageCollection.entity.page;
 
-            return roomCollection.entity._embedded.rooms.map(room =>
+            return messageCollection.entity._embedded.messages.map(message =>
                 client({
                     method: 'GET',
-                    path: room._links.self.href
+                    path: message._links.self.href
                 })
             );
-        }).then(roomPromises => {
-            return when.all(roomPromises);
-        }).done(rooms => {
+        }).then(messagePromises => {
+            return when.all(messagePromises);
+        }).done(messages => {
             this.setState({
                 page: this.page,
-                rooms: rooms,
+                messages: messages,
                 attributes: Object.keys(this.schema.properties),
                 pageSize: this.state.pageSize,
                 links: this.links
@@ -127,7 +127,7 @@ class App extends React.Component {
 
     refreshAndGoToLastPage(message) {
         follow(client, root, [{
-            rel: 'rooms',
+            rel: 'messages',
             params: {size: this.state.pageSize}
         }]).done(response => {
             if (response.entity._links.last !== undefined) {
@@ -140,27 +140,27 @@ class App extends React.Component {
 
     refreshCurrentPage(message) {
         follow(client, root, [{
-            rel: 'rooms',
+            rel: 'messages',
             params: {
                 size: this.state.pageSize,
                 page: this.state.page.number
             }
-        }]).then(roomCollection => {
-            this.links = roomCollection.entity._links;
-            this.page = roomCollection.entity.page;
+        }]).then(messageCollection => {
+            this.links = messageCollection.entity._links;
+            this.page = messageCollection.entity.page;
 
-            return roomCollection.entity._embedded.rooms.map(room => {
+            return messageCollection.entity._embedded.messages.map(message => {
                 return client({
                     method: 'GET',
-                    path: room._links.self.href
+                    path: message._links.self.href
                 })
             });
-        }).then(roomPromises => {
-            return when.all(roomPromises);
-        }).then(rooms => {
+        }).then(messagePromises => {
+            return when.all(messagePromises);
+        }).then(messages => {
             this.setState({
                 page: this.page,
-                rooms: rooms,
+                messages: messages,
                 attributes: Object.keys(this.schema.properties),
                 pageSize: this.state.pageSize,
                 links: this.links
@@ -171,9 +171,9 @@ class App extends React.Component {
     componentDidMount() {
         this.loadFromServer(this.state.pageSize);
         stompClient.register([
-            {route: '/topic/newRoom', callback: this.refreshAndGoToLastPage},
-            {route: '/topic/updateRoom', callback: this.refreshCurrentPage},
-            {route: '/topic/deleteRoom', callback: this.refreshCurrentPage}
+            {route: '/topic/newMessage', callback: this.refreshAndGoToLastPage},
+            {route: '/topic/updateMessage', callback: this.refreshCurrentPage},
+            {route: '/topic/deleteMessage', callback: this.refreshCurrentPage}
         ]);
     }
 
@@ -181,8 +181,8 @@ class App extends React.Component {
         return (
             <div>
                 <CreateDialog attributes={this.state.attributes} onCreate={this.onCreate}/>
-                <RoomList page={this.state.page}
-                          rooms={this.state.rooms}
+                <MessageList page={this.state.page}
+                          messages={this.state.messages}
                           links={this.state.links}
                           pageSize={this.state.pageSize}
                           attributes={this.state.attributes}
@@ -204,11 +204,11 @@ class CreateDialog extends React.Component {
 
     handleSubmit(e) {
         e.preventDefault();
-        const newRoom = {};
+        const newMessage = {};
         this.props.attributes.forEach(attribute => {
-            newRoom[attribute] = ReactDOM.findDOMNode(this.refs[attribute]).value.trim();
+            newMessage[attribute] = ReactDOM.findDOMNode(this.refs[attribute]).value.trim();
         });
-        this.props.onCreate(newRoom);
+        this.props.onCreate(newMessage);
 
         this.props.attributes.forEach(attribute => {
             ReactDOM.findDOMNode(this.refs[attribute]).value = '';
@@ -226,13 +226,13 @@ class CreateDialog extends React.Component {
 
         return (
             <div>
-                <a href="#createRoom">Create</a>
+                <a href="#createMessage">Create</a>
 
-                <div id="createRoom" className="modalDialog">
+                <div id="createMessage" className="modalDialog">
                     <div>
                         <a href="#" title="Close" className="close">X</a>
 
-                        <h2>Create new room</h2>
+                        <h2>Create new message</h2>
 
                         <form>
                             {inputs}
@@ -254,34 +254,34 @@ class UpdateDialog extends React.Component {
 
     handleSubmit(e) {
         e.preventDefault();
-        const updatedRoom = {};
+        const updatedMessage = {};
         this.props.attributes.forEach(attribute => {
-            updatedRoom[attribute] = ReactDOM.findDOMNode(this.refs[attribute]).value.trim();
+            updatedMessage[attribute] = ReactDOM.findDOMNode(this.refs[attribute]).value.trim();
         });
-        this.props.onUpdate(this.props.room, updatedRoom);
+        this.props.onUpdate(this.props.message, updatedMessage);
         window.location = "#";
     }
 
     render() {
         const inputs = this.props.attributes.map(attribute =>
-            <p key={this.props.room.entity[attribute]}>
+            <p key={this.props.message.entity[attribute]}>
                 <input type="text" placeholder={attribute}
-                       defaultValue={this.props.room.entity[attribute]}
+                       defaultValue={this.props.message.entity[attribute]}
                        ref={attribute} className="field"/>
             </p>
         );
 
-        const dialogId = "updateRoom-" + this.props.room.entity._links.self.href;
+        const dialogId = "updateMessage-" + this.props.message.entity._links.self.href;
 
         return (
-            <div key={this.props.room.entity._links.self.href}>
+            <div key={this.props.message.entity._links.self.href}>
                 <a href={"#" + dialogId}>Update</a>
 
                 <div id={dialogId} className="modalDialog">
                     <div>
                         <a href="#" title="Close" className="close">X</a>
 
-                        <h2>Update an room</h2>
+                        <h2>Update an message</h2>
 
                         <form>
                             {inputs}
@@ -294,7 +294,7 @@ class UpdateDialog extends React.Component {
     }
 }
 
-class RoomList extends React.Component {
+class MessageList extends React.Component {
     constructor(props) {
         super(props);
         this.handleNavFirst = this.handleNavFirst.bind(this);
@@ -336,11 +336,11 @@ class RoomList extends React.Component {
 
     render() {
         const pageInfo = this.props.page.hasOwnProperty("number") ?
-            <h3>Rooms - Page {this.props.page.number + 1} of {this.props.page.totalPages}</h3> : null;
+            <h3>Messages - Page {this.props.page.number + 1} of {this.props.page.totalPages}</h3> : null;
 
-        const rooms = this.props.rooms.map(room =>
-            <Room key={room.entity._links.self.href}
-                  room={room}
+        const messages = this.props.messages.map(message =>
+            <Message key={message.entity._links.self.href}
+                  message={message}
                   attributes={this.props.attributes}
                   onUpdate={this.props.onUpdate}
                   onDelete={this.props.onDelete}/>
@@ -371,7 +371,7 @@ class RoomList extends React.Component {
                         <th></th>
                         <th></th>
                     </tr>
-                    {rooms}
+                    {messages}
                     </tbody>
                 </table>
                 <div>
@@ -382,7 +382,7 @@ class RoomList extends React.Component {
     }
 }
 
-class Room extends React.Component {
+class Message extends React.Component {
 
     constructor(props) {
         super(props);
@@ -390,15 +390,15 @@ class Room extends React.Component {
     }
 
     handleDelete() {
-        this.props.onDelete(this.props.room);
+        this.props.onDelete(this.props.message);
     }
 
     render() {
         return (
             <tr>
-                <td>{this.props.room.entity.title}</td>
+                <td>{this.props.message.entity.content}</td>
                 <td>
-                    <UpdateDialog room={this.props.room}
+                    <UpdateDialog message={this.props.message}
                                   attributes={this.props.attributes}
                                   onUpdate={this.props.onUpdate}/>
                 </td>
