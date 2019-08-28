@@ -13,7 +13,7 @@ class App extends React.Component {
 
     constructor(props) {
         super(props);
-        this.state = {messages: [], attributes: [], page: 1, pageSize: 2, links: {}};
+        this.state = {messages: [], attributes: [], page: 1, pageSize: 2, links: {}, loggedInManager: this.props.loggedInManager};
         this.updatePageSize = this.updatePageSize.bind(this);
         this.onCreate = this.onCreate.bind(this);
         this.onUpdate = this.onUpdate.bind(this);
@@ -34,6 +34,16 @@ class App extends React.Component {
                 path: messageCollection.entity._links.profile.href,
                 headers: {'Accept': 'application/schema+json'}
             }).then(schema => {
+                Object.keys(schema.entity.properties).forEach(function (property) {
+                    if (schema.entity.properties[property].hasOwnProperty('format') &&
+                        schema.entity.properties[property].format === 'uri') {
+                        delete schema.entity.properties[property];
+                    }
+                    else if (schema.entity.properties[property].hasOwnProperty('$ref')) {
+                        delete schema.entity.properties[property];
+                    }
+                });
+
                 this.schema = schema.entity;
                 this.links = messageCollection.entity._links;
                 return messageCollection;
@@ -70,26 +80,45 @@ class App extends React.Component {
         })
     }
 
+    // TODO : not working
     onUpdate(message, updatedMessage) {
-        client({
-            method: 'PUT',
-            path: message.entity._links.self.href,
-            entity: updatedMessage,
-            headers: {
-                'Content-Type': 'application/json',
-                'If-Match': message.headers.Etag
-            }
-        }).done(response => {
-            /* Let the websocket handler update the state */
-        }, response => {
-            if (response.status.code === 412) {
-                alert('DENIED: Unable to update ' + message.entity._links.self.href + '. Your copy is stale.');
-            }
-        });
+        if(message.entity.chatter && message.entity.chatter.name === this.state.loggedInManager) {
+            console.log(message.entity.chatter);
+            updatedMessage["chatter"] = message.entity.chatter;
+            client({
+                method: 'PUT',
+                path: message.entity._links.self.href,
+                entity: updatedMessage,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'If-Match': message.headers.Etag
+                }
+            }).done(response => {
+                /* Let the websocket handler update the state */
+            }, response => {
+                if (response.status.code === 403) {
+                    alert('ACCESS DENIED: You are not authorized to update ' +
+                        message.entity._links.self.href);
+                }
+
+                if (response.status.code === 412) {
+                    alert('DENIED: Unable to update ' + message.entity._links.self.href + '. Your copy is stale.');
+                }
+            });
+        } else {
+            alert("You are not authorized to update");
+        }
     }
 
     onDelete(message) {
-        client({method: 'DELETE', path: message.entity._links.self.href});
+        client({method: 'DELETE', path: message.entity._links.self.href}
+        ).done(response => {/* let the websocket handle updating the UI */},
+        response => {
+            if (response.status.code === 403) {
+                alert('ACCESS DENIED: You are not authorized to delete ' +
+                    message.entity._links.self.href);
+            }
+        });
     }
 
     onNavigate(navUri) {
@@ -189,7 +218,8 @@ class App extends React.Component {
                           onNavigate={this.onNavigate}
                           onUpdate={this.onUpdate}
                           onDelete={this.onDelete}
-                          updatePageSize={this.updatePageSize}/>
+                          updatePageSize={this.updatePageSize}
+                          loggedInManager={this.state.loggedInManager}/>
             </div>
         )
     }
@@ -273,24 +303,34 @@ class UpdateDialog extends React.Component {
 
         const dialogId = "updateMessage-" + this.props.message.entity._links.self.href;
 
-        return (
-            <div key={this.props.message.entity._links.self.href}>
-                <a href={"#" + dialogId}>Update</a>
+        const isChatterCorrect = this.props.message.entity.chatter && this.props.message.entity.chatter.name === this.props.loggedInManager;
 
-                <div id={dialogId} className="modalDialog">
-                    <div>
-                        <a href="#" title="Close" className="close">X</a>
+        if (isChatterCorrect === false) {
+            return (
+                <div>
+                    <a>Not Your Message</a>
+                </div>
+            )
+        } else {
+            return (
+                <div key={this.props.message.entity._links.self.href}>
+                    <a href={"#" + dialogId}>Update</a>
 
-                        <h2>Update an message</h2>
+                    <div id={dialogId} className="modalDialog">
+                        <div>
+                            <a href="#" title="Close" className="close">X</a>
 
-                        <form>
-                            {inputs}
-                            <button onClick={this.handleSubmit}>Update</button>
-                        </form>
+                            <h2>Update an message</h2>
+
+                            <form>
+                                {inputs}
+                                <button onClick={this.handleSubmit}>Update</button>
+                            </form>
+                        </div>
                     </div>
                 </div>
-            </div>
-        )
+            )
+        }
     }
 }
 
@@ -343,7 +383,8 @@ class MessageList extends React.Component {
                   message={message}
                   attributes={this.props.attributes}
                   onUpdate={this.props.onUpdate}
-                  onDelete={this.props.onDelete}/>
+                  onDelete={this.props.onDelete}
+                  loggedInManager={this.props.loggedInManager}/>
         );
 
         const navLinks = [];
@@ -368,6 +409,7 @@ class MessageList extends React.Component {
                     <tbody>
                     <tr>
                         <th>Title</th>
+                        <th>Chatter</th>
                         <th></th>
                         <th></th>
                     </tr>
@@ -397,10 +439,12 @@ class Message extends React.Component {
         return (
             <tr>
                 <td>{this.props.message.entity.content}</td>
+                <td>{this.props.message.entity.chatter && this.props.message.entity.chatter.name}</td>
                 <td>
                     <UpdateDialog message={this.props.message}
                                   attributes={this.props.attributes}
-                                  onUpdate={this.props.onUpdate}/>
+                                  onUpdate={this.props.onUpdate}
+                                  loggedInManager={this.props.loggedInManager}/>
                 </td>
                 <td>
                     <button onClick={this.handleDelete}>Delete</button>
@@ -411,7 +455,7 @@ class Message extends React.Component {
 }
 
 ReactDOM.render(
-    <App/>,
+    <App loggedInManager={document.getElementById('managername').innerHTML } />,
     document.getElementById('react')
 )
 

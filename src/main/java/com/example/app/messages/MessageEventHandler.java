@@ -1,12 +1,12 @@
 package com.example.app.messages;
 
+import com.example.app.chatters.Chatter;
+import com.example.app.chatters.ChatterRepository;
 import com.example.app.config.WebSocketConfig;
-import org.springframework.data.rest.core.annotation.HandleAfterCreate;
-import org.springframework.data.rest.core.annotation.HandleAfterDelete;
-import org.springframework.data.rest.core.annotation.HandleAfterSave;
-import org.springframework.data.rest.core.annotation.RepositoryEventHandler;
+import org.springframework.data.rest.core.annotation.*;
 import org.springframework.hateoas.EntityLinks;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -14,10 +14,26 @@ import org.springframework.stereotype.Component;
 public class MessageEventHandler {
 	private final SimpMessagingTemplate websocket;
 	private final EntityLinks entityLinks;
+	private final ChatterRepository chatterRepository;
 
-	public MessageEventHandler(SimpMessagingTemplate websocket, EntityLinks entityLinks) {
+	public MessageEventHandler(SimpMessagingTemplate websocket, EntityLinks entityLinks, ChatterRepository chatterRepository) {
 		this.websocket = websocket;
 		this.entityLinks = entityLinks;
+		this.chatterRepository = chatterRepository;
+	}
+
+	@HandleBeforeCreate
+	@HandleAfterSave
+	public void applyUserInformationUsingSecurityContext(Message message) {
+		String name = SecurityContextHolder.getContext().getAuthentication().getName();
+		Chatter chatter = this.chatterRepository.findByName(name);
+		if (chatter == null) {
+			Chatter newChatter = new Chatter();
+			newChatter.setName(name);
+			newChatter.setRoles(new String[]{"ROLE_CHATTER"});
+			chatter = this.chatterRepository.save(newChatter);
+		}
+		message.setChatter(chatter);
 	}
 
 	@HandleAfterCreate
